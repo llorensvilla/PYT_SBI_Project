@@ -1,0 +1,23 @@
+REMARK  Residues forming the pocket
+REMARK  CHAIN, RESNAME, RESNUM
+REMARK  A LYS 65
+REMARK  A GLN 69
+REMARK 
+ATOM      1  N  LYS A  65      40.627   8.929  24.359  1.00  0.00
+ATOM      2  CA LYS A  65      39.305   8.754  24.953  1.00  0.00
+ATOM      3  C  LYS A  65      38.232   9.465  24.140  1.00  0.00
+ATOM      4  O  LYS A  65      37.157   8.953  23.807  1.00  0.00
+ATOM      5  CB LYS A  65      39.234   9.155  26.402  1.00  0.00
+ATOM      6  CG LYS A  65      37.806   8.984  26.864  1.00  0.00
+ATOM      7  CD LYS A  65      37.504   9.574  28.228  1.00  0.00
+ATOM      8  CE LYS A  65      37.848   8.605  29.328  1.00  0.00
+ATOM      9  NZ LYS A  65      39.313   8.576  29.492  1.00  0.00
+ATOM     10  N  GLN A  69      35.017   7.866  21.891  1.00  0.00
+ATOM     11  CA GLN A  69      33.616   8.361  21.949  1.00  0.00
+ATOM     12  C  GLN A  69      33.103   8.825  20.604  1.00  0.00
+ATOM     13  O  GLN A  69      31.919   8.597  20.293  1.00  0.00
+ATOM     14  CB GLN A  69      33.432   9.583  22.853  1.00  0.00
+ATOM     15  CG GLN A  69      33.725   9.178  24.295  1.00  0.00
+ATOM     16  CD GLN A  69      33.967  10.273  25.316  1.00  0.00
+ATOM     17 OE1 GLN A  69      34.052   9.926  26.471  1.00  0.00
+ATOM     18 NE2 GLN A  69      33.920  11.557  24.972  1.00  0.00
