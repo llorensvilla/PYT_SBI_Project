@@ -4,7 +4,7 @@ from scipy.ndimage import gaussian_filter
 from scipy.spatial import ConvexHull
 from sklearn.cluster import DBSCAN
 
-""" Function to generate unique filenames with increasing numbers """
+""" Function to generate unique filenames with increasing numbers  Hola """
 def get_unique_filename(base_name, extension):
     """Genera un nombre de archivo único numerando secuencialmente"""
     i = 1
