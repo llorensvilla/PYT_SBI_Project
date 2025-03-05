@@ -120,7 +120,7 @@ def extract_pocket_points(grid, dog_filtered, threshold_percentile=95):
 # 5) Clusterizar pockets con DBSCAN
 # ------------------------------------------------------------------------------
 
-def cluster_pockets(pocket_points, eps=1.5, min_samples=5):
+def cluster_pockets(pocket_points, eps=0.8, min_samples=5):
     """
     Agrupa los puntos 'pocket_points' en clusters usando DBSCAN.
     Retorna una lista de diccionarios con info de cada pocket.
