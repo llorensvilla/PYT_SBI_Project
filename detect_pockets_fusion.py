@@ -1,18 +1,41 @@
 #!/usr/bin/env python3
 import os
 import sys
+import time
 import shutil
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import ConvexHull
 from sklearn.cluster import DBSCAN
 
-############################################################
+##############################
 #  Helper Functions
-############################################################
+##############################
+def print_progress(current_step, total_steps, start_time):
+    """
+    Prints a progress message showing:
+      1) How many steps have been completed / how many remain
+      2) Elapsed time
+      3) Estimated remaining time for the pipeline
+    """
+    elapsed = time.time() - start_time
+    progress_fraction = current_step / total_steps if total_steps > 0 else 1
+    steps_left = total_steps - current_step
+
+    if progress_fraction > 0:
+        estimated_total_time = elapsed / progress_fraction
+    else:
+        estimated_total_time = 0.0
+
+    remaining = estimated_total_time - elapsed
+    print(f"[Step {current_step}/{total_steps}] "
+          f"({steps_left} steps left) "
+          f"Elapsed time: {elapsed:.1f}s | "
+          f"Estimated remaining time: {remaining:.1f}s")
+
 def get_unique_filename(folder_path, base_name, extension):
     """
-    Generates a unique filename (base_name_1.extension, base_name_2.extension, etc.)
+    Generates a unique filename (e.g., base_name_1.extension, base_name_2.extension, etc.)
     inside the specified folder_path.
     """
     i = 1
@@ -22,21 +45,21 @@ def get_unique_filename(folder_path, base_name, extension):
             return filename
         i += 1
 
-############################################################################
-#  1) Read PDB Atoms
-############################################################################
+##############################
+#  1) Read PDB Atoms and Coordinates
+##############################
 def read_pdb_atoms(filename):
     """
     Reads a PDB file and returns a list of dictionaries with atom information:
-    {
-        'atom_name': str,
-        'res_name': str,
-        'chain': str,
-        'res_num': int,
-        'x': float,
-        'y': float,
-        'z': float
-    }
+      {
+          'atom_name': str,
+          'res_name': str,
+          'chain': str,
+          'res_num': int,
+          'x': float,
+          'y': float,
+          'z': float
+      }
     Only considers lines starting with 'ATOM'.
     Raises FileNotFoundError if the file does not exist.
     """
@@ -250,14 +273,14 @@ def save_residues_as_pdb(atom_list, residues, output_filename):
         raise IOError(f"Error writing residues PDB file: {e}")
 
 ##############################
-#  7) Visualization Scripts (PyMOL and Chimera)
+#  7) Visualization Scripts Generators
 ##############################
 def generate_pymol_script(original_pdb_name, pockets_pdb_name, pocket_residues_names, output_script):
     """
     Creates a PyMOL script that:
       - Opens the original protein
-      - Opens the pocket centroids (pockets_pdb_name) and shows them as a transparent surface
-      - Opens each pocket residue file, also as a transparent surface
+      - Opens the pocket centroids (pockets_pdb_name) and displays them as a transparent surface
+      - Opens each pocket residue file as a transparent surface
     """
     try:
         with open(output_script, 'w') as file:
@@ -330,7 +353,7 @@ class BindingSitePredictor:
         self.residue_distance = residue_distance
         
         self.protein_name = os.path.splitext(os.path.basename(pdb_file))[0]
-        self.output_folder = self.protein_name
+        self.output_folder = self.protein_name + "_results"
         if not os.path.isdir(self.output_folder):
             os.makedirs(self.output_folder)
         
@@ -342,36 +365,50 @@ class BindingSitePredictor:
             raise IOError(f"Error copying original PDB file: {e}")
     
     def run(self):
+        start_time = time.time()
+        TOTAL_STEPS = 7
+        current_step = 0
+        
         # 1. Read protein atoms and coordinates
         protein_atoms = read_pdb_atoms(self.pdb_file)
         protein_coords = np.array([[a['x'], a['y'], a['z']] for a in protein_atoms])
+        current_step += 1
+        print_progress(current_step, TOTAL_STEPS, start_time)
         
         # 2. Create a 3D grid around the protein
         grid_points = create_grid(protein_coords, spacing=self.grid_spacing)
+        current_step += 1
+        print_progress(current_step, TOTAL_STEPS, start_time)
         
         # 3. Apply Difference of Gaussians (DoG) filter
         dog_filtered = apply_dog_filter(grid_points, protein_coords)
+        current_step += 1
+        print_progress(current_step, TOTAL_STEPS, start_time)
         
         # 4. Extract pocket candidate points from the grid
         pocket_candidates = extract_pocket_points(grid_points, dog_filtered, threshold_percentile=self.dog_threshold_percentile)
         if pocket_candidates.size == 0:
             raise ValueError("No pocket candidate points found. Check the DoG threshold or input data.")
+        current_step += 1
+        print_progress(current_step, TOTAL_STEPS, start_time)
         
         # 5. Cluster the pocket candidate points
         pocket_clusters = cluster_pockets(pocket_candidates, eps=self.eps, min_samples=self.min_samples)
         if len(pocket_clusters) == 0:
             raise ValueError("No significant pockets found after clustering.")
+        current_step += 1
+        print_progress(current_step, TOTAL_STEPS, start_time)
         
-        # 6. Generate unique filenames inside the output folder
+        # 6. Generate unique filenames inside the output folder and save outputs
         pockets_pdb = get_unique_filename(self.output_folder, "predicted_pockets", "pdb")
         pymol_script = get_unique_filename(self.output_folder, "visualize_pockets", "pml")
         chimera_script = get_unique_filename(self.output_folder, "visualize_pockets", "cmd")
         
-        # 7. Save pocket centroids to a PDB file
+        # Save pocket centroids to a PDB file
         save_pockets_as_pdb(pocket_clusters, pockets_pdb)
         print(f"✅ Pocket centroids saved as {pockets_pdb}")
         
-        # 8. For each pocket, find and save residues (atoms within a distance of the pocket centroid)
+        # For each pocket, find and save residues (atoms within a distance of the pocket centroid)
         pocket_residues_list = []
         for i, pocket in enumerate(pocket_clusters, start=1):
             residues = find_residues_in_pocket(protein_atoms, pocket['centroid'], distance_threshold=self.residue_distance)
@@ -379,12 +416,13 @@ class BindingSitePredictor:
             save_residues_as_pdb(protein_atoms, residues, pocket_residues_pdb)
             pocket_residues_list.append(pocket_residues_pdb)
             print(f"   Pocket {i} residues saved in: {pocket_residues_pdb}")
+        current_step += 1
+        print_progress(current_step, TOTAL_STEPS, start_time)
         
-        # 9. For visualization scripts, use only the base filenames (no folder path)
+        # 7. Generate visualization scripts (PyMOL and Chimera)
+        # For visualization scripts, use only base filenames (assumes you 'cd' into the folder)
         local_pdb_name = os.path.basename(self.local_pdb)
         pockets_pdb_name = os.path.basename(pockets_pdb)
-        pymol_script_name = os.path.basename(pymol_script)
-        chimera_script_name = os.path.basename(chimera_script)
         pocket_residues_names = [os.path.basename(x) for x in pocket_residues_list]
         
         generate_pymol_script(local_pdb_name, pockets_pdb_name, pocket_residues_names, pymol_script)
@@ -395,6 +433,7 @@ class BindingSitePredictor:
         
         print("\n📝 NOTE: Please 'cd' into the folder", self.output_folder,
               "before running the .cmd or .pml scripts to avoid file not found errors.")
+        print("Processing complete.")
 
 ##############################
 #  9) MAIN EXECUTION
