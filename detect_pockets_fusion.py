@@ -14,10 +14,10 @@ from sklearn.cluster import DBSCAN
 def print_progress(current_step, total_steps, start_time, step_name):
     """
     Prints a progress message showing:
-      1) The current step vs total steps
-      2) The name of the step
-      3) Elapsed time
-      4) Estimated remaining time for the entire pipeline
+      1) Current step vs. total steps.
+      2) Step name.
+      3) Elapsed time.
+      4) Estimated remaining time for the entire pipeline.
     """
     elapsed = time.time() - start_time
     steps_left = total_steps - current_step
@@ -32,14 +32,13 @@ def print_progress(current_step, total_steps, start_time, step_name):
 
     print(f"[Step {current_step}/{total_steps} - {step_name}] "
           f"({steps_left} steps left) "
-          f"Elapsed: {elapsed:.1f}s | "
-          f"Estimated remaining: {remaining:.1f}s")
+          f"Elapsed: {elapsed:.1f}s | Estimated remaining: {remaining:.1f}s")
 
 
 def get_unique_filename(folder_path, base_name, extension):
     """
     Generates a unique filename (base_name_1.extension, base_name_2.extension, etc.)
-    inside the specified folder_path.
+    within the specified folder_path.
     """
     i = 1
     while True:
@@ -48,22 +47,57 @@ def get_unique_filename(folder_path, base_name, extension):
             return filename
         i += 1
 
+
+##############################
+#  New Dynamic Parameter Functions
+##############################
+def auto_spacing(protein_coords):
+    """
+    Determines the grid spacing dynamically based on the protein size.
+    For large proteins: spacing = 1.0 Å,
+    for intermediate proteins: spacing = 0.75 Å,
+    otherwise: spacing = 0.5 Å.
+    """
+    protein_size = np.linalg.norm(protein_coords.max(axis=0) - protein_coords.min(axis=0))
+    if protein_size > 150:
+        return 1.0
+    elif protein_size > 75:
+        return 0.75
+    else:
+        return 0.5
+
+
+def auto_dog_threshold(num_atoms):
+    """
+    Adjusts the GeoPredictor (DoG) threshold percentile based on the total number of atoms.
+      - If num_atoms > 10000: percentile = 97
+      - If num_atoms < 1000: percentile = 90
+      - Otherwise: percentile = 95
+    """
+    if num_atoms > 10000:
+        return 97
+    elif num_atoms < 1000:
+        return 90
+    else:
+        return 95
+
+
 ##############################
 #  1) Read PDB Atoms / Coordinates
 ##############################
 def read_pdb_atoms(filename):
     """
     Reads a PDB file and returns a list of dictionaries with atom information:
-    {
-        'atom_name': str,
-        'res_name': str,
-        'chain': str,
-        'res_num': int,
-        'x': float,
-        'y': float,
-        'z': float
-    }
-    Only considers lines starting with 'ATOM'.
+      {
+          'atom_name': str,
+          'res_name': str,
+          'chain': str,
+          'res_num': int,
+          'x': float,
+          'y': float,
+          'z': float
+      }
+    Only lines starting with "ATOM" are considered.
     Raises FileNotFoundError if the file does not exist.
     """
     if not os.path.isfile(filename):
@@ -95,10 +129,11 @@ def read_pdb_atoms(filename):
         raise ValueError("No ATOM records found in the PDB file.")
     return atoms
 
+
 def read_pdb_coords(filename):
     """
-    Extracts atomic coordinates from a PDB file (only x, y, z).
-    Considers lines starting with 'ATOM'.
+    Extracts atomic coordinates (x, y, z) from a PDB file.
+    Only lines starting with "ATOM" are processed.
     """
     coords = []
     with open(filename, 'r') as file:
@@ -115,12 +150,13 @@ def read_pdb_coords(filename):
         raise ValueError("No atomic coordinates found in the PDB file.")
     return np.array(coords)
 
+
 ##############################
 #  2) Create a 3D Grid
 ##############################
 def create_grid(coords, spacing=0.5):
     """
-    Generates a 3D grid around the given coordinates, with a 5 Å border.
+    Generates a 3D grid around the given coordinates, adding a 5 Å border.
     """
     if coords.size == 0:
         raise ValueError("Empty coordinates array provided to create_grid.")
@@ -131,73 +167,72 @@ def create_grid(coords, spacing=0.5):
                                       z_min:z_max:spacing]
     return np.vstack((grid_x.ravel(), grid_y.ravel(), grid_z.ravel())).T
 
+
 ##############################
-#  3) Apply Difference of Gaussians (GeoPredictor Filter) with Sub-Steps
+#  3) Apply GeoPredictor Filter with Sub-Steps
 ##############################
 def apply_dog_filter(grid, protein_coords, sigma1=1.0, sigma2=2.0, substep_interval=50):
     """
-    Applies a Difference of Gaussians operation (GeoPredictor filter) to detect potential pockets.
-    This version includes sub-step progress updates to show partial progress.
-
-    substep_interval: how often (in # of coords) to print progress updates
+    Applies a Difference of Gaussians (DoG) operation (GeoPredictor filter) to detect potential pockets.
+    Provides sub-step progress updates.
+    
+    substep_interval: number of protein coordinates processed before printing progress.
     """
-    import time
     start_substep_time = time.time()
-
     density = np.zeros(len(grid))
     N = len(protein_coords)
     for i, coord in enumerate(protein_coords, start=1):
         dist = np.linalg.norm(grid - coord, axis=1)
         density += np.exp(-dist**2 / (2 * sigma1**2))
-
-        # Sub-step progress update
         if i % substep_interval == 0 or i == N:
             fraction_done = i / N
             elapsed_sub = time.time() - start_substep_time
             estimated_total = (elapsed_sub / fraction_done) if fraction_done > 0 else 0
             remain = estimated_total - elapsed_sub
             print(f"    [GeoPredictor sub-step] Processed {i}/{N} coords. "
-                  f"Elapsed={elapsed_sub:.1f}s | "
-                  f"Est. total={estimated_total:.1f}s | "
-                  f"Remain={remain:.1f}s")
-
+                  f"Elapsed={elapsed_sub:.1f}s | Est. total={estimated_total:.1f}s | Remain={remain:.1f}s")
     blurred1 = gaussian_filter(density, sigma=sigma1)
     blurred2 = gaussian_filter(density, sigma=sigma2)
     dog_result = blurred1 - blurred2
-
-    # Normalize between 0 and 1
     return (dog_result - np.min(dog_result)) / (np.max(dog_result) - np.min(dog_result))
+
 
 ##############################
 #  4) Extract Points Above Threshold
 ##############################
 def extract_pocket_points(grid, dog_filtered, threshold_percentile=95):
     """
-    Returns the grid points whose GeoPredictor (DoG) value is above a certain percentile.
+    Returns the grid points whose GeoPredictor (DoG) value is above a given percentile threshold.
     """
     threshold = np.percentile(dog_filtered, threshold_percentile)
     return grid[dog_filtered > threshold]
 
-##############################
-#  5) Cluster Pockets with DBSCAN
-##############################
-def cluster_pockets(pocket_points, eps=0.8, min_samples=5):
-    """
-    Clusters 'pocket_points' using DBSCAN, returning a list of pocket dictionaries.
-    Raises an error if clustering results in no significant pockets.
-    """
-    from sklearn.cluster import DBSCAN
 
+###############################################################
+#  5) Cluster Pockets with DBSCAN (Dynamic MAX_CLUSTER_VOLUME)
+###############################################################
+def cluster_pockets(pocket_points, protein_coords, eps, min_samples):
+    """
+    Clusters candidate pocket points using DBSCAN and returns a list of pocket dictionaries.
+    
+    Dynamic adjustments:
+      - MAX_CLUSTER_VOLUME is set to 10% of the protein's bounding box volume.
+      
+    Each pocket dictionary contains:
+      'cluster_id', 'coords', 'centroid', 'volume', 'surface_area', and 'dogsite_score' (the geometric score).
+    """
     if len(pocket_points) < 2:
         raise ValueError("Not enough pocket points to perform clustering.")
-    
     clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(pocket_points)
     labels = clustering.labels_
     clustered_pockets = []
     unique_labels = set(labels)
     unique_labels.discard(-1)  # Remove noise
 
-    MAX_CLUSTER_VOLUME = 3000.0
+    # Compute maximum allowed volume based on the protein's bounding box
+    bbox = protein_coords.max(axis=0) - protein_coords.min(axis=0)
+    bbox_volume = np.prod(bbox)
+    MAX_CLUSTER_VOLUME = bbox_volume * 0.1  # 10% of bounding box volume
 
     for cluster_id in unique_labels:
         cluster_coords = pocket_points[labels == cluster_id]
@@ -208,9 +243,7 @@ def cluster_pockets(pocket_points, eps=0.8, min_samples=5):
         except Exception:
             continue
         volume, surface_area = hull.volume, hull.area
-
-        # Score based on volume & surface area, clamped to 1.0
-        dogsite_score = min((volume / (surface_area + 1e-6)) * 10, 1.0)
+        gp_score = min((volume / (surface_area + 1e-6)) * 10, 1.0)
         if volume > MAX_CLUSTER_VOLUME:
             continue
         centroid = cluster_coords.mean(axis=0)
@@ -220,90 +253,80 @@ def cluster_pockets(pocket_points, eps=0.8, min_samples=5):
             'centroid': centroid,
             'volume': volume,
             'surface_area': surface_area,
-            'dogsite_score': dogsite_score
+            'dogsite_score': gp_score  # GeoPredictor geometric score.
         })
 
     if not clustered_pockets:
         raise ValueError("Clustering resulted in no significant pockets.")
     return clustered_pockets
 
+
 ##############################
-#  6) Save Pocket Centroids
+#  Additional Helper: Evaluate Binding Site Quality
 ##############################
-def save_pockets_as_pdb(pockets, output_filename):
+def evaluate_binding_site_score(atom_list, pocket, distance_threshold=5.0, interaction_weights=None):
     """
-    Saves the predicted pockets in a PDB file with a descriptive header.
-    Each pocket is stored as a HETATM line (coordinates = centroid).
-    The output will have neatly aligned columns and sorted by Surface Area.
-    Now references 'GeoPredictor' as the generator.
+    Evaluates the binding site quality by analyzing residues within a given distance of the pocket centroid.
+    Uses heuristics based on non-covalent interactions:
+      - Hydrogen bonds, ionic interactions, metal coordination, hydrophobic and aromatic interactions.
+    Calculates a weighted sum and normalizes it to a value between 0 and 1.
     """
-    try:
-        # Sort pockets by Surface Area (descending)
-        pockets_sorted = sorted(pockets, key=lambda x: x['surface_area'], reverse=True)
+    default_weights = {"hbond": 0.25, "ionic": 0.25, "metal": 0.15, "hydrophobic": 0.20, "aromatic": 0.15}
+    if interaction_weights is None:
+        interaction_weights = default_weights
 
-        with open(output_filename, 'w') as file:
-            # Change "Binding Site Predictor" to "GeoPredictor"
-            file.write("REMARK  Generated by GeoPredictor\n")
-            file.write("REMARK  Columns:\n")
-            file.write("REMARK  HETATM  ID  Residue  Chain  ResNum  X      Y      Z      Occupancy  Score  Volume   SurfaceArea\n")
+    # Define residue groups for each type of interaction (using standard three-letter codes)
+    hbond_residues = {"SER", "THR", "TYR", "ASN", "GLN", "HIS", "LYS", "ARG"}
+    ionic_pos_residues = {"LYS", "ARG", "HIS"}
+    ionic_neg_residues = {"ASP", "GLU"}
+    metal_binding_residues = {"HIS", "CYS", "ASP", "GLU"}
+    hydrophobic_residues = {"ALA", "VAL", "LEU", "ILE", "MET", "PHE", "TRP"}
+    aromatic_residues = {"PHE", "TYR", "TRP"}
 
-            # Write each pocket
-            for i, pocket in enumerate(pockets_sorted):
-                x, y, z = pocket['centroid']
-                volume = pocket['volume']
-                surface_area = pocket['surface_area']
-                dogsite_score = pocket['dogsite_score']
+    residues = find_residues_in_pocket(atom_list, pocket['centroid'], distance_threshold)
+    if not residues:
+        return 0.0
 
-                # Format columns more like a normal PDB
-                # Example column alignment:
-                #  1-6  = HETATM
-                #  7-11 = atom ID (right aligned)
-                # 12    = space
-                # 13-16 = atom name
-                # 17    = space
-                # 18-20 = residue name
-                # 21    = space
-                # 22    = chain
-                # 23-26 = residue number
-                # 27-30 = spaces
-                # 31-38 = x coord (right aligned)
-                # 39-46 = y coord
-                # 47-54 = z coord
-                # 55-60 = occupancy
-                # 61-66 = "Score"
-                # 67-    = volume & surface area strings
-                file.write(
-                    f"HETATM{(i+1):5d}  POC POC A   1    "
-                    f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  {dogsite_score:5.2f}  "
-                    f"V={volume:6.2f} SA={surface_area:6.2f}\n"
-                )
+    counts = {"hbond": 0, "ionic": 0, "metal": 0, "hydrophobic": 0, "aromatic": 0}
+    for chain, res_name, res_num in residues:
+        res_name = res_name.upper()
+        if res_name in hbond_residues:
+            counts["hbond"] += 1
+        if res_name in ionic_pos_residues or res_name in ionic_neg_residues:
+            counts["ionic"] += 1
+        if res_name in metal_binding_residues:
+            counts["metal"] += 1
+        if res_name in hydrophobic_residues:
+            counts["hydrophobic"] += 1
+        if res_name in aromatic_residues:
+            counts["aromatic"] += 1
 
-    except Exception as e:
-        raise IOError(f"Error writing pockets PDB file: {e}")
+    weighted_sum = sum(interaction_weights[key] * counts[key] for key in counts)
+    max_per_residue = sum(interaction_weights.values())
+    normalized_score = weighted_sum / (len(residues) * max_per_residue)
+    return min(max(normalized_score, 0.0), 1.0)
+
 
 ##############################
-#  6b) Find Residues by Distance
+#  6) Find and Save Pocket-Related Data
 ##############################
 def find_residues_in_pocket(atom_list, centroid, distance_threshold=5.0):
     """
-    Finds residues within 'distance_threshold' Å of the pocket centroid.
-    Returns a sorted list of (chain, res_name, res_num).
+    Finds residues within a specified distance (default 5.0 Å) from the pocket centroid.
+    Returns a sorted list of tuples: (chain, res_name, res_num).
     """
     residues_in_pocket = set()
     for atom in atom_list:
         x, y, z = atom['x'], atom['y'], atom['z']
-        dist = np.linalg.norm(np.array([x, y, z]) - centroid)
-        if dist <= distance_threshold:
+        if np.linalg.norm(np.array([x, y, z]) - centroid) <= distance_threshold:
             residues_in_pocket.add((atom['chain'], atom['res_name'], atom['res_num']))
     return sorted(residues_in_pocket, key=lambda x: (x[0], x[2]))
 
-##############################
-#  6c) Save Residues PDB
-##############################
+
 def save_residues_as_pdb(atom_list, residues, output_filename):
     """
-    Saves a PDB file containing only atoms belonging to the given 'residues',
-    where each residue is (chain, res_name, res_num).
+    Saves a PDB file containing only the atoms that belong to the given residues.
+    Each residue is represented as a tuple: (chain, res_name, res_num).
     """
     residue_set = set(residues)
     try:
@@ -312,77 +335,85 @@ def save_residues_as_pdb(atom_list, residues, output_filename):
             out.write("REMARK  CHAIN, RESNAME, RESNUM\n")
             for r in residues:
                 out.write(f"REMARK  {r[0]} {r[1]} {r[2]}\n")
-            out.write("REMARK \n")
+            out.write("REMARK\n")
             atom_id = 1
             for atom in atom_list:
-                c  = atom['chain']
-                rn = atom['res_name']
-                rnum = atom['res_num']
-                if (c, rn, rnum) in residue_set:
+                if (atom['chain'], atom['res_name'], atom['res_num']) in residue_set:
                     out.write(
                         f"ATOM  {atom_id:5d} {atom['atom_name']:^4s}"
-                        f"{rn:>3s} {c}{rnum:4d}    "
+                        f"{atom['res_name']:>3s} {atom['chain']}{atom['res_num']:4d}    "
                         f"{atom['x']:8.3f}{atom['y']:8.3f}{atom['z']:8.3f}  1.00  0.00\n"
                     )
                     atom_id += 1
     except Exception as e:
         raise IOError(f"Error writing residues PDB file: {e}")
 
+
+def save_pockets_as_pdb(pockets, output_filename):
+    """
+    Saves the predicted pockets in a PDB file with a descriptive header.
+    Each pocket is stored as a HETATM line (using the centroid coordinates) and
+    sorted by surface area. The header indicates that dynamic parameters were used,
+    and the composite score (combining geometric and interaction scores) is reported.
+    """
+    try:
+        pockets_sorted = sorted(pockets, key=lambda x: x['surface_area'], reverse=True)
+        with open(output_filename, 'w') as file:
+            file.write("REMARK  Generated by GeoPredictor (Enhanced Binding Site Prediction with Dynamic Adjustments)\n")
+            file.write("REMARK  Dynamic Parameters: auto grid spacing, auto GeoPredictor threshold, normalized cluster volume\n")
+            file.write("REMARK  Columns:\n")
+            file.write("HETATM  ID  Residue  Chain  ResNum  X      Y      Z      Occupancy  CompositeScore  Volume   SurfaceArea\n")
+            for i, pocket in enumerate(pockets_sorted):
+                x, y, z = pocket['centroid']
+                volume = pocket['volume']
+                surface_area = pocket['surface_area']
+                composite_score = pocket.get('composite_score', pocket['dogsite_score'])
+                file.write(
+                    f"HETATM{(i+1):5d}  POC POC A   1    "
+                    f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  {composite_score:5.2f}  "
+                    f"V={volume:6.2f} SA={surface_area:6.2f}\n"
+                )
+    except Exception as e:
+        raise IOError(f"Error writing pockets PDB file: {e}")
+
+
 ##############################
 #  7) Visualization Scripts
 ##############################
 def generate_pymol_script(original_pdb_path, pockets_pdb_path, pocket_residues_paths, output_script):
     """
-    Creates a PyMOL script with the following visualization style:
-      - Protein as a cartoon with partial transparency (0.2).
-      - A wire mesh (show mesh) on the protein to resemble an 'alambrado' around it.
-      - Pocket centroids shown as spheres (colored individually).
-      - Pocket residues shown as surfaces in distinct colors with slight transparency.
-      - The background is set to black, similar to the example image.
-
-    Using absolute paths so that you can run:
-        pymol <folder>/visualize_pockets_1.pml
-    from anywhere, and PyMOL will still find the files.
+    Generates a PyMOL script for visualization:
+      - Displays the protein in cartoon style with partial transparency.
+      - Overlays a wire mesh on the protein.
+      - Shows pocket centroids as spheres.
+      - Displays pocket residues as colored, semi-transparent surfaces.
+      - Sets a black background.
+    
+    Absolute paths are used to ensure the script runs from any location.
     """
     try:
         with open(output_script, 'w') as file:
-            # Optional: black background
             file.write("bg_color black\n")
-            
-            # Load the original protein
             file.write(f"load {original_pdb_path}, protein\n")
             file.write("hide everything, protein\n\n")
-            
-            # Show cartoon
             file.write("show cartoon, protein\n")
             file.write("color gray70, protein\n")
             file.write("set cartoon_transparency, 0.2, protein\n\n")
-
-            # Show mesh
             file.write("show mesh, protein\n")
             file.write("color brown50, protein\n")
             file.write("set mesh_as_cylinders, 1\n")
             file.write("set mesh_width, 0.6\n")
             file.write("set surface_quality, 2\n")
             file.write("set two_sided_lighting, on\n\n")
-
-            # Load pocket centroids
             file.write(f"load {pockets_pdb_path}, pockets\n")
             file.write("hide everything, pockets\n")
             file.write("show spheres, pockets\n")
             file.write("set sphere_scale, 0.4, pockets\n\n")
-            
-            # Define colors
             colors = ["yellow", "red", "green", "blue", "magenta", "cyan", "orange", "purple", "lime", "teal"]
-            
-            # Color each pocket centroid
             for i in range(len(pocket_residues_paths)):
                 color = colors[i % len(colors)]
                 file.write(f"color {color}, pockets and id {i+1}\n")
-            
             file.write("\n")
-
-            # Load each pocket residue file
             for i, residue_pdb_path in enumerate(pocket_residues_paths):
                 color = colors[i % len(colors)]
                 object_name = f"residue_{i+1}"
@@ -391,21 +422,19 @@ def generate_pymol_script(original_pdb_path, pockets_pdb_path, pocket_residues_p
                 file.write(f"show surface, {object_name}\n")
                 file.write(f"color {color}, {object_name}\n")
                 file.write(f"set transparency, 0.3, {object_name}\n\n")
-            
-            # Zoom all
             file.write("zoom all\n")
-            
     except Exception as e:
         raise IOError(f"Error writing PyMOL script: {e}")
 
 
 def generate_chimera_script(original_pdb_path, pockets_pdb_path, pocket_residues_paths, output_script):
     """
-    Creates a Chimera script that:
-      - Opens the original protein as a surface (mesh)
-      - Opens the pocket centroids as spheres
-      - Opens each pocket residue file as a transparent surface
-      - Uses absolute paths so you can run from anywhere.
+    Generates a Chimera script for visualization:
+      - Opens the protein as a surface (mesh).
+      - Opens pocket centroids as spheres.
+      - Opens pocket residues as semi-transparent surfaces.
+    
+    Absolute paths are used to ensure the script runs from any location.
     """
     try:
         with open(output_script, 'w') as file:
@@ -430,93 +459,128 @@ def generate_chimera_script(original_pdb_path, pockets_pdb_path, pocket_residues
     except Exception as e:
         raise IOError(f"Error writing Chimera script: {e}")
 
+
 ##############################
-#  8) GeoPredictor Class
+#  8) GeoPredictor Class (Enhanced with Dynamic Adjustments)
 ##############################
 class GeoPredictor:
     """
     GeoPredictor:
-    A class for detecting binding sites from a protein PDB file.
-    It creates a 3D grid, applies a difference-of-Gaussians filter (GeoPredictor),
-    clusters potential pockets, finds residues near each pocket, and
-    generates output files (PDB, PyMOL script, Chimera script) in a folder named after the protein.
+    Detects binding sites from a protein PDB file.
+    The workflow consists of:
+      1. Reading protein atoms and calculating coordinates.
+      2. Dynamically adjusting the grid spacing based on protein size.
+      3. Applying the GeoPredictor filter.
+      4. Extracting grid points above a dynamically set threshold.
+      5. Clustering candidate points using DBSCAN with fixed parameters (eps = 0.8, min_samples = 5)
+         and normalizing the maximum cluster volume relative to the protein's bounding box.
+      6. Evaluating each pocket using heuristics for non-covalent interactions and
+         physico-chemical complementarity, then combining this score with the geometric score.
+      7. Saving the results and generating visualization scripts for PyMOL and Chimera.
+    
+    Note: No external libraries for binding site prediction are used.
     """
-    def __init__(self, pdb_file, grid_spacing=0.5, dog_threshold_percentile=95, eps=0.8, min_samples=5, residue_distance=5.0):
+    def __init__(self, pdb_file, grid_spacing=0.5, dog_threshold_percentile=95,
+                 eps=0.8, min_samples=5, residue_distance=5.0,
+                 geometric_weight=0.5, interaction_weight=0.5,
+                 interaction_weights=None):
         if not os.path.isfile(pdb_file):
             raise FileNotFoundError(f"Input PDB file '{pdb_file}' not found.")
         self.pdb_file = pdb_file
-        self.grid_spacing = grid_spacing
-        self.dog_threshold_percentile = dog_threshold_percentile
-        self.eps = eps
-        self.min_samples = min_samples
+        self.grid_spacing = grid_spacing           # Initial value; will be updated dynamically
+        self.dog_threshold_percentile = dog_threshold_percentile  # Initial value; updated dynamically
+        self.eps = eps                             # Fixed DBSCAN eps value
+        self.min_samples = min_samples             # Fixed DBSCAN min_samples value
         self.residue_distance = residue_distance
-        
-        # Output folder named <protein_name>_results
+        self.geometric_weight = geometric_weight
+        self.interaction_weight = interaction_weight
+        self.interaction_weights = interaction_weights  # Dictionary of weights for interactions
+
         self.protein_name = os.path.splitext(os.path.basename(pdb_file))[0]
         self.output_folder = self.protein_name + "_results"
         if not os.path.isdir(self.output_folder):
             os.makedirs(self.output_folder)
-        
-        # Copy the original PDB file into the output folder
         self.local_pdb = os.path.join(self.output_folder, f"{self.protein_name}.pdb")
         try:
             shutil.copy(self.pdb_file, self.local_pdb)
         except Exception as e:
             raise IOError(f"Error copying original PDB file: {e}")
-    
+
     def run(self):
         start_time = time.time()
         TOTAL_STEPS = 7
         current_step = 0
 
-        # Step 1: Read protein atoms
+        # Step 1: Read protein atoms and coordinates.
         step_name = "Reading Protein Atoms"
         protein_atoms = read_pdb_atoms(self.pdb_file)
         protein_coords = np.array([[a['x'], a['y'], a['z']] for a in protein_atoms])
         current_step += 1
         print_progress(current_step, TOTAL_STEPS, start_time, step_name)
 
-        # Step 2: Create grid
+        # Dynamic adjustment: update grid spacing and GeoPredictor threshold.
+        auto_spacing_val = auto_spacing(protein_coords)
+        print(f"Using auto grid spacing: {auto_spacing_val:.2f} Å (based on protein size)")
+        self.grid_spacing = auto_spacing_val
+
+        auto_threshold = auto_dog_threshold(len(protein_atoms))
+        print(f"Using auto GeoPredictor threshold percentile: {auto_threshold:.1f} (based on {len(protein_atoms)} atoms)")
+        self.dog_threshold_percentile = auto_threshold
+
+        # Step 2: Create grid with dynamic spacing.
         step_name = "Creating 3D Grid"
         grid_points = create_grid(protein_coords, spacing=self.grid_spacing)
         current_step += 1
         print_progress(current_step, TOTAL_STEPS, start_time, step_name)
 
-        # Step 3: Apply DoG (GeoPredictor) filter (with sub-steps)
+        # Step 3: Apply GeoPredictor filter with progress updates.
         step_name = "Applying GeoPredictor Filter"
-        dog_filtered = apply_dog_filter(
+        gp_filtered = apply_dog_filter(
             grid_points,
             protein_coords,
             sigma1=1.0,
             sigma2=2.0,
-            substep_interval=50  # Update sub-step progress every 50 coords
+            substep_interval=50
         )
         current_step += 1
         print_progress(current_step, TOTAL_STEPS, start_time, step_name)
 
-        # Step 4: Extract pocket points
+        # Step 4: Extract pocket candidate points using the dynamic threshold.
         step_name = "Extracting Pocket Points"
-        pocket_candidates = extract_pocket_points(grid_points, dog_filtered, threshold_percentile=self.dog_threshold_percentile)
+        pocket_candidates = extract_pocket_points(grid_points, gp_filtered, threshold_percentile=self.dog_threshold_percentile)
         if pocket_candidates.size == 0:
             raise ValueError("No pocket candidate points found. Check the GeoPredictor threshold or input data.")
         current_step += 1
         print_progress(current_step, TOTAL_STEPS, start_time, step_name)
 
-        # Step 5: Cluster pockets
-        step_name = "Clustering Pocket Points"
-        pocket_clusters = cluster_pockets(pocket_candidates, eps=self.eps, min_samples=self.min_samples)
+        # Fixed DBSCAN parameters
+        eps_val = 0.8
+        min_samples_val = 5
+        print(f"Using DBSCAN parameters: eps = {eps_val:.2f}, min_samples = {min_samples_val}")
+
+        # Step 5: Cluster pocket candidate points with DBSCAN using fixed parameters.
+        pocket_clusters = cluster_pockets(pocket_candidates, protein_coords, eps=eps_val, min_samples=min_samples_val)
         if len(pocket_clusters) == 0:
-            raise ValueError("No significant pockets found after clustering.")
+            raise ValueError("Clustering resulted in no significant pockets.")
         current_step += 1
         print_progress(current_step, TOTAL_STEPS, start_time, step_name)
 
-        # Step 6: Save outputs
+        # Step 5b: Evaluate additional binding site quality (interaction score).
+        for pocket in pocket_clusters:
+            interaction_score = evaluate_binding_site_score(protein_atoms, pocket,
+                                                              distance_threshold=self.residue_distance,
+                                                              interaction_weights=self.interaction_weights)
+            composite_score = (self.geometric_weight * pocket['dogsite_score'] +
+                               self.interaction_weight * interaction_score)
+            pocket['interaction_score'] = interaction_score
+            pocket['composite_score'] = composite_score
+
+        # Step 6: Save output PDB for pockets and associated residues.
         step_name = "Saving Pockets and Residues"
         pockets_pdb = get_unique_filename(self.output_folder, "predicted_pockets", "pdb")
         pymol_script = get_unique_filename(self.output_folder, "visualize_pockets", "pml")
         chimera_script = get_unique_filename(self.output_folder, "visualize_pockets", "cmd")
 
-        # Here we save pockets with the improved column alignment
         save_pockets_as_pdb(pocket_clusters, pockets_pdb)
         print(f"✅ Pocket centroids saved as {pockets_pdb}")
 
@@ -531,7 +595,7 @@ class GeoPredictor:
         current_step += 1
         print_progress(current_step, TOTAL_STEPS, start_time, step_name)
 
-        # Step 7: Generate visualization scripts
+        # Step 7: Generate visualization scripts for PyMOL and Chimera.
         step_name = "Generating Visualization Scripts"
         local_pdb_path = os.path.abspath(self.local_pdb)
         pockets_pdb_path = os.path.abspath(pockets_pdb)
@@ -546,14 +610,13 @@ class GeoPredictor:
         current_step += 1
         print_progress(current_step, TOTAL_STEPS, start_time, step_name)
 
-        # Print total runtime
         end_time = time.time()
         total_runtime = end_time - start_time
         print(f"\nProcessing complete. Total script time: {total_runtime:.1f}s")
 
 
 ##############################
-#  9) MAIN EXECUTION
+#  9) Main Execution
 ##############################
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -562,11 +625,20 @@ if __name__ == "__main__":
     try:
         predictor = GeoPredictor(
             pdb_file=input_pdb_filename,
-            grid_spacing=0.5,
-            dog_threshold_percentile=95,
-            eps=0.8,
-            min_samples=5,
-            residue_distance=5.0
+            grid_spacing=0.5,          # Initial value; will be updated dynamically
+            dog_threshold_percentile=95,  # Initial value; will be updated dynamically
+            eps=0.8,                   # Fixed DBSCAN eps value
+            min_samples=5,             # Fixed DBSCAN min_samples value
+            residue_distance=5.0,
+            geometric_weight=0.5,      # Weight for the geometric score
+            interaction_weight=0.5,    # Weight for the interaction score
+            interaction_weights={      # Weights for each type of non-covalent interaction
+                "hbond": 0.25,
+                "ionic": 0.25,
+                "metal": 0.15,
+                "hydrophobic": 0.20,
+                "aromatic": 0.15
+            }
         )
         predictor.run()
     except Exception as e:
